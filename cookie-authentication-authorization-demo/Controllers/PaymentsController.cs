@@ -1,246 +1,237 @@
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using cookie_authentication_authorization_demo.Data;
-using cookie_authentication_authorization_demo.Models;
+using Microsoft.Extensions.Logging;
+using cookie_authentication_authorization_demo.Services;
+using cookie_authentication_authorization_demo.Models.DTOs;
+using cookie_authentication_authorization_demo.Models.ViewModels;
+using cookie_authentication_authorization_demo.Enums;
 using System.Security.Claims;
 using System.Text.Json;
+using cookie_authentication_authorization_demo.Data;
+using Microsoft.EntityFrameworkCore;
 using cookie_authentication_authorization_demo.Services;
 
 namespace cookie_authentication_authorization_demo.Controllers
 {
+    [Authorize]
     [ApiController]
     [Route("api/[controller]")]
-    [Authorize]
     public class PaymentsController : ControllerBase
     {
-        private readonly ApplicationDbContext _context;
         private readonly IPaymentService _paymentService;
-        private readonly IAuditService _auditService;
+        private readonly ILogger<PaymentsController> _logger;
 
-        public PaymentsController(ApplicationDbContext context, IPaymentService paymentService, IAuditService auditService)
+        public PaymentsController(
+            IPaymentService paymentService,
+            ILogger<PaymentsController> logger)
         {
-            _context = context;
             _paymentService = paymentService;
-            _auditService = auditService;
+            _logger = logger;
         }
 
-        // GET: api/payments
-        [HttpGet]
-        [Authorize(Policy = "RequireFinanceTeamRole")]
-        public async Task<ActionResult<IEnumerable<Payment>>> GetPayments()
-        {
-            return await _context.Payments
-                .Include(p => p.Order)
-                .Include(p => p.User)
-                .OrderByDescending(p => p.CreatedAt)
-                .ToListAsync();
-        }
-
-        // GET: api/payments/5
-        [HttpGet("{id}")]
-        [Authorize]
-        public async Task<ActionResult<Payment>> GetPayment(int id)
-        {
-            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(userId))
-            {
-                return Unauthorized();
-            }
-
-            var payment = await _context.Payments
-                .Include(p => p.Order)
-                .FirstOrDefaultAsync(p => p.Id == id);
-
-            if (payment == null)
-            {
-                return NotFound();
-            }
-
-            if (payment.UserId != userId && !User.IsInRole("Administrator") && !User.IsInRole("FinanceTeam"))
-            {
-                return Forbid();
-            }
-
-            return payment;
-        }
-
-        // POST: api/payments
         [HttpPost]
-        [Authorize]
-        public async Task<IActionResult> CreatePayment(CreatePaymentRequest request)
+        public async Task<ActionResult<PaymentDTO>> CreatePayment(CreatePaymentViewModel model)
         {
-            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(userId))
+            try
             {
-                return Unauthorized();
+                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized();
+                }
+
+                var payment = await _paymentService.CreatePaymentAsync(userId, model);
+                return CreatedAtAction(nameof(GetPayment), new { id = payment.Id }, payment);
             }
-
-            var payment = new Payment
+            catch (Exception ex)
             {
-                OrderId = request.OrderId,
-                UserId = userId,
-                Amount = request.Amount,
-                PaymentMethod = request.PaymentMethod,
-                Status = PaymentStatus.Pending.ToString(),
-                CreatedAt = DateTime.UtcNow
-            };
-
-            _context.Payments.Add(payment);
-            await _context.SaveChangesAsync();
-
-            await _auditService.LogActionAsync(
-                "Payment",
-                "Create",
-                userId,
-                JsonSerializer.Serialize(new { payment.Id, payment.OrderId, payment.Amount, payment.PaymentMethod })
-            );
-
-            return Ok(payment);
+                _logger.LogError(ex, "Error creating payment");
+                return StatusCode(500, "An error occurred while creating the payment");
+            }
         }
 
-        // POST: api/payments/5/refund
+        [HttpGet("{id}")]
+        public async Task<ActionResult<PaymentDTO>> GetPayment(int id)
+        {
+            try
+            {
+                var payment = await _paymentService.GetPaymentByIdAsync(id);
+                if (payment == null)
+                {
+                    return NotFound();
+                }
+
+                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(userId) || payment.UserId != userId)
+                {
+                    return Forbid();
+                }
+
+                return payment;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving payment {PaymentId}", id);
+                return StatusCode(500, "An error occurred while retrieving the payment");
+            }
+        }
+
+        [HttpGet("user")]
+        public async Task<ActionResult<IEnumerable<PaymentDTO>>> GetUserPayments()
+        {
+            try
+            {
+                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized();
+                }
+
+                var payments = await _paymentService.GetUserPaymentsAsync(userId);
+                return Ok(payments);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving user payments");
+                return StatusCode(500, "An error occurred while retrieving the payments");
+            }
+        }
+
+        [HttpPost("{id}/process")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<PaymentDTO>> ProcessPayment(int id)
+        {
+            try
+            {
+                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized();
+                }
+
+                var payment = await _paymentService.ProcessPaymentAsync(id, userId);
+                return Ok(payment);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ex.Message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing payment {PaymentId}", id);
+                return StatusCode(500, "An error occurred while processing the payment");
+            }
+        }
+
+        [HttpPost("{id}/complete")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<PaymentDTO>> CompletePayment(int id)
+        {
+            try
+            {
+                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized();
+                }
+
+                var payment = await _paymentService.CompletePaymentAsync(id, userId);
+                return Ok(payment);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ex.Message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error completing payment {PaymentId}", id);
+                return StatusCode(500, "An error occurred while completing the payment");
+            }
+        }
+
+        [HttpPost("{id}/cancel")]
+        public async Task<ActionResult<PaymentDTO>> CancelPayment(int id)
+        {
+            try
+            {
+                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized();
+                }
+
+                var payment = await _paymentService.CancelPaymentAsync(id, userId);
+                return Ok(payment);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ex.Message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error cancelling payment {PaymentId}", id);
+                return StatusCode(500, "An error occurred while cancelling the payment");
+            }
+        }
+
         [HttpPost("{id}/refund")]
-        [Authorize(Policy = "RequireFinanceTeamRole")]
-        public async Task<IActionResult> RefundPayment(int id, RefundRequest request)
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<PaymentDTO>> RefundPayment(int id)
         {
-            var payment = await _context.Payments
-                .Include(p => p.Order)
-                .FirstOrDefaultAsync(p => p.Id == id);
-
-            if (payment == null)
-            {
-                return NotFound();
-            }
-
-            if (payment.Status != PaymentStatus.Completed.ToString())
-            {
-                return BadRequest("Only completed payments can be refunded");
-            }
-
-            payment.Status = PaymentStatus.Refunded.ToString();
-            payment.UpdatedAt = DateTime.UtcNow;
-
-            // Update order status
-            payment.Order.Status = OrderStatus.Refunded;
-            payment.Order.UpdatedAt = DateTime.UtcNow;
-
             try
             {
-                await _context.SaveChangesAsync();
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                if (!PaymentExists(id))
+                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(userId))
                 {
-                    return NotFound();
+                    return Unauthorized();
                 }
-                else
-                {
-                    throw;
-                }
+
+                var payment = await _paymentService.RefundPaymentAsync(id, userId);
+                return Ok(payment);
             }
-
-            await _auditService.LogActionAsync(
-                "Payment",
-                "Refund",
-                User.FindFirst(ClaimTypes.NameIdentifier)?.Value,
-                JsonSerializer.Serialize(new { paymentId = id, oldStatus = payment.Status, newStatus = PaymentStatus.Refunded })
-            );
-
-            return Ok(new { 
-                PaymentId = payment.Id,
-                Status = payment.Status,
-                UpdatedAt = payment.UpdatedAt
-            });
-        }
-
-        [HttpPut("{id}/status")]
-        [Authorize(Roles = "Administrator,FinanceTeam")]
-        public async Task<IActionResult> UpdatePaymentStatus(int id, [FromBody] string status)
-        {
-            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(userId))
-            {
-                return Unauthorized();
-            }
-
-            var payment = await _context.Payments.FindAsync(id);
-            if (payment == null)
+            catch (KeyNotFoundException)
             {
                 return NotFound();
             }
-
-            if (payment.Status == PaymentStatus.Completed.ToString())
+            catch (InvalidOperationException ex)
             {
-                return BadRequest(new { message = "Cannot update completed payment" });
+                return BadRequest(ex.Message);
             }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error refunding payment {PaymentId}", id);
+                return StatusCode(500, "An error occurred while refunding the payment");
+            }
+        }
 
-            var oldStatus = payment.Status;
-            payment.Status = status;
-            payment.UpdatedAt = DateTime.UtcNow;
-
+        [HttpGet("{id}/verify")]
+        public async Task<ActionResult<bool>> VerifyPayment(int id)
+        {
             try
             {
-                await _context.SaveChangesAsync();
-
-                await _auditService.LogActionAsync(
-                    "Payment",
-                    "UpdateStatus",
-                    userId,
-                    JsonSerializer.Serialize(new { paymentId = id, oldStatus, newStatus = status })
-                );
-
-                return Ok(new { message = "Payment status updated successfully" });
+                var isVerified = await _paymentService.VerifyPaymentAsync(id);
+                return Ok(isVerified);
             }
-            catch (DbUpdateConcurrencyException)
+            catch (Exception ex)
             {
-                if (!PaymentExists(id))
-                {
-                    return NotFound();
-                }
-                else
-                {
-                    throw;
-                }
+                _logger.LogError(ex, "Error verifying payment {PaymentId}", id);
+                return StatusCode(500, "An error occurred while verifying the payment");
             }
-        }
-
-        [HttpGet("order/{orderId}")]
-        [Authorize]
-        public async Task<ActionResult<IEnumerable<Payment>>> GetPaymentsByOrder(int orderId)
-        {
-            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(userId))
-            {
-                return Unauthorized();
-            }
-
-            var payments = await _context.Payments
-                .Where(p => p.OrderId == orderId)
-                .ToListAsync();
-
-            if (!payments.Any())
-            {
-                return NotFound();
-            }
-
-            if (payments.First().UserId != userId && !User.IsInRole("Administrator") && !User.IsInRole("FinanceTeam"))
-            {
-                return Forbid();
-            }
-
-            return payments;
-        }
-
-        private bool PaymentExists(int id)
-        {
-            return _context.Payments.Any(e => e.Id == id);
-        }
-
-        private string GeneratePaymentNumber()
-        {
-            return $"PAY-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString().Substring(0, 8)}";
         }
     }
 
