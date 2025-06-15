@@ -1,11 +1,13 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using cookie_authentication_authorization_demo.Data;
 using cookie_authentication_authorization_demo.Models;
 using cookie_authentication_authorization_demo.Services;
+using cookie_authentication_authorization_demo.Repositories;
 using System.Security.Claims;
 using System.Text.Json;
+using cookie_authentication_authorization_demo.Models.DTOs;
+using cookie_authentication_authorization_demo.Models.Mappers;
+using cookie_authentication_authorization_demo.Enums;
 
 namespace cookie_authentication_authorization_demo.Controllers;
 
@@ -17,18 +19,25 @@ namespace cookie_authentication_authorization_demo.Controllers;
 [Authorize]
 public class SellersController : ControllerBase
 {
-    private readonly ApplicationDbContext _context;
+    private readonly ISellerRepository _sellerRepository;
     private readonly IAuditService _auditService;
+    private readonly IProductService _productService;
+    private readonly IInventoryService _inventoryService;
 
     /// <summary>
     /// Constructor for SellersController
     /// </summary>
-    /// <param name="context">Database context</param>
+    /// <param name="sellerRepository">Seller repository</param>
     /// <param name="auditService">Audit service</param>
-    public SellersController(ApplicationDbContext context, IAuditService auditService)
+    /// <param name="productService">Product service</param>
+    /// <param name="inventoryService">Inventory service</param>
+    /// <param name="inventoryMapper">Inventory mapper</param>
+    public SellersController(ISellerRepository sellerRepository, IAuditService auditService, IProductService productService, IInventoryService inventoryService)
     {
-        _context = context;
+        _sellerRepository = sellerRepository;
         _auditService = auditService;
+        _productService = productService;
+        _inventoryService = inventoryService;
     }
 
     /// <summary>
@@ -37,8 +46,7 @@ public class SellersController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IEnumerable<Seller>>> GetSellers()
     {
-        var sellers = await _context.Sellers.ToListAsync();
-
+        var sellers = await _sellerRepository.GetAllAsync();
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (!string.IsNullOrEmpty(userId))
         {
@@ -49,7 +57,6 @@ public class SellersController : ControllerBase
                 JsonSerializer.Serialize(new { action = "ViewAll" })
             );
         }
-
         return Ok(sellers);
     }
 
@@ -59,13 +66,11 @@ public class SellersController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<Seller>> GetSeller(int id)
     {
-        var seller = await _context.Sellers.FindAsync(id);
-
+        var seller = await _sellerRepository.GetByIdAsync(id);
         if (seller == null)
         {
             return NotFound();
         }
-
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (!string.IsNullOrEmpty(userId))
         {
@@ -76,7 +81,6 @@ public class SellersController : ControllerBase
                 JsonSerializer.Serialize(new { sellerId = id, businessName = seller.BusinessName })
             );
         }
-
         return Ok(seller);
     }
 
@@ -91,29 +95,23 @@ public class SellersController : ControllerBase
         {
             return BadRequest(ModelState);
         }
-
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
-
         seller.CreatedAt = DateTime.UtcNow;
         seller.IsActive = true;
-        _context.Sellers.Add(seller);
-        await _context.SaveChangesAsync();
-
+        var createdSeller = await _sellerRepository.AddAsync(seller);
         await _auditService.LogActionAsync(
             "Seller",
             "Create",
             userId,
             JsonSerializer.Serialize(new
             {
-                sellerId = seller.Id,
-                businessName = seller.BusinessName,
-                email = seller.Email,
-                taxId = seller.TaxId
+                sellerId = createdSeller.Id,
+                businessName = createdSeller.BusinessName,
+                email = createdSeller.Email,
+                taxId = createdSeller.TaxId
             })
         );
-
-        return CreatedAtAction(nameof(GetSeller), new { id = seller.Id }, seller);
+        return CreatedAtAction(nameof(GetSeller), new { id = createdSeller.Id }, createdSeller);
     }
 
     /// <summary>
@@ -127,21 +125,16 @@ public class SellersController : ControllerBase
         {
             return BadRequest("Invalid seller ID");
         }
-
         if (!ModelState.IsValid)
         {
             return BadRequest(ModelState);
         }
-
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
-
-        var existingSeller = await _context.Sellers.FindAsync(id);
+        var existingSeller = await _sellerRepository.GetByIdAsync(id);
         if (existingSeller == null || !existingSeller.IsActive)
         {
             return NotFound("Seller not found");
         }
-
         var oldValues = new
         {
             existingSeller.BusinessName,
@@ -149,52 +142,34 @@ public class SellersController : ControllerBase
             existingSeller.PhoneNumber,
             existingSeller.Address
         };
-
         existingSeller.BusinessName = seller.BusinessName;
         existingSeller.Email = seller.Email;
         existingSeller.PhoneNumber = seller.PhoneNumber;
         existingSeller.Address = seller.Address;
         existingSeller.UpdatedAt = DateTime.UtcNow;
-
-        try
-        {
-            await _context.SaveChangesAsync();
-
-            await _auditService.LogActionAsync(
-                "Seller",
-                "Update",
-                userId,
-                JsonSerializer.Serialize(new
+        await _sellerRepository.UpdateAsync(existingSeller);
+        await _auditService.LogActionAsync(
+            "Seller",
+            "Update",
+            userId,
+            JsonSerializer.Serialize(new
+            {
+                sellerId = id,
+                oldSeller = oldValues,
+                newSeller = new
                 {
-                    sellerId = id,
-                    oldSeller = oldValues,
-                    newSeller = new
-                    {
-                        existingSeller.BusinessName,
-                        existingSeller.Email,
-                        existingSeller.PhoneNumber,
-                        existingSeller.Address
-                    }
-                })
-            );
-
-            return Ok(new { 
-                Id = existingSeller.Id,
-                BusinessName = existingSeller.BusinessName,
-                UpdatedAt = existingSeller.UpdatedAt
-            });
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            if (!SellerExists(id))
-            {
-                return NotFound();
-            }
-            else
-            {
-                throw;
-            }
-        }
+                    existingSeller.BusinessName,
+                    existingSeller.Email,
+                    existingSeller.PhoneNumber,
+                    existingSeller.Address
+                }
+            })
+        );
+        return Ok(new {
+            Id = existingSeller.Id,
+            BusinessName = existingSeller.BusinessName,
+            UpdatedAt = existingSeller.UpdatedAt
+        });
     }
 
     /// <summary>
@@ -205,19 +180,15 @@ public class SellersController : ControllerBase
     public async Task<IActionResult> DeleteSeller(int id)
     {
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
-
-        var seller = await _context.Sellers.FindAsync(id);
+        var seller = await _sellerRepository.GetByIdAsync(id);
         if (seller == null || !seller.IsActive)
         {
             return NotFound("Seller not found");
         }
-
         // Soft delete
         seller.IsActive = false;
         seller.UpdatedAt = DateTime.UtcNow;
-        await _context.SaveChangesAsync();
-
+        await _sellerRepository.UpdateAsync(seller);
         await _auditService.LogActionAsync(
             "Seller",
             "Delete",
@@ -229,16 +200,82 @@ public class SellersController : ControllerBase
                 email = seller.Email
             })
         );
-
-        return Ok(new { 
+        return Ok(new {
             Id = seller.Id,
             BusinessName = seller.BusinessName,
             DeletedAt = seller.UpdatedAt
         });
     }
 
-    private bool SellerExists(int id)
+    [HttpGet("{id}/products")]
+    public async Task<ActionResult<IEnumerable<ProductDTO>>> GetSellerProducts(int id)
     {
-        return _context.Sellers.Any(e => e.Id == id);
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized();
+        }
+
+        var products = await _productService.GetProductDTOsBySellerAsync(id);
+        return Ok(products);
+    }
+
+    [HttpGet("{id}/inventory")]
+    public async Task<ActionResult<IEnumerable<InventoryDTO>>> GetSellerInventory(int id)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized();
+        }
+
+        var inventory = await _inventoryService.GetInventoryBySellerIdAsync(id);
+        return Ok(inventory.Select(i => InventoryMapper.ToDTO(i)));
+    }
+
+    [HttpGet("{id}/inventory/status/{status}")]
+    public async Task<ActionResult<IEnumerable<InventoryDTO>>> GetSellerInventoryByStatus(int id, InventoryStatus status)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized();
+        }
+
+        var inventory = await _inventoryService.GetInventoryBySellerAndStatusAsync(id, status);
+        return Ok(inventory.Select(i => InventoryMapper.ToDTO(i)));
+    }
+
+    [HttpGet("{id}/inventory/date-range")]
+    public async Task<ActionResult<IEnumerable<InventoryDTO>>> GetSellerInventoryByDateRange(
+        int id,
+        [FromQuery] DateTime startDate,
+        [FromQuery] DateTime endDate)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized();
+        }
+
+        var inventory = await _inventoryService.GetInventoryBySellerAndDateRangeAsync(id, startDate, endDate);
+        return Ok(inventory.Select(i => InventoryMapper.ToDTO(i)));
+    }
+
+    [HttpGet("{id}/inventory/status/{status}/date-range")]
+    public async Task<ActionResult<IEnumerable<InventoryDTO>>> GetSellerInventoryByStatusAndDateRange(
+        int id,
+        InventoryStatus status,
+        [FromQuery] DateTime startDate,
+        [FromQuery] DateTime endDate)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized();
+        }
+
+        var inventory = await _inventoryService.GetInventoryBySellerStatusAndDateRangeAsync(id, status, startDate, endDate);
+        return Ok(inventory.Select(i => InventoryMapper.ToDTO(i)));
     }
 } 

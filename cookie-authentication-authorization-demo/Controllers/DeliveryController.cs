@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using cookie_authentication_authorization_demo.Data;
 using cookie_authentication_authorization_demo.Models;
+using cookie_authentication_authorization_demo.Enums;
 
 namespace cookie_authentication_authorization_demo.Controllers
 {

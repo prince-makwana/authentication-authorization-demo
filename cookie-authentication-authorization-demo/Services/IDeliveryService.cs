@@ -1,3 +1,4 @@
+using cookie_authentication_authorization_demo.Enums;
 using cookie_authentication_authorization_demo.Models;
 using Microsoft.AspNetCore.Identity;
 

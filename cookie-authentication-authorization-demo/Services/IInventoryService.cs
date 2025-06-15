@@ -1,5 +1,6 @@
 using cookie_authentication_authorization_demo.Models;
 using Microsoft.AspNetCore.Identity;
+using cookie_authentication_authorization_demo.Enums;
 
 namespace cookie_authentication_authorization_demo.Services
 {
@@ -62,7 +63,7 @@ namespace cookie_authentication_authorization_demo.Services
         /// </summary>
         /// <param name="sellerId">ID of the seller</param>
         /// <returns>List of inventory items for the seller</returns>
-        Task<IEnumerable<Inventory>> GetInventoryBySellerIdAsync(string sellerId);
+        Task<IEnumerable<Inventory>> GetInventoryBySellerIdAsync(int sellerId);
 
         /// <summary>
         /// Gets all inventory items with a specific status
@@ -108,7 +109,7 @@ namespace cookie_authentication_authorization_demo.Services
         /// <param name="sellerId">ID of the seller</param>
         /// <param name="status">Status of the inventory items</param>
         /// <returns>List of inventory items for the seller with the specified status</returns>
-        Task<IEnumerable<Inventory>> GetInventoryBySellerAndStatusAsync(string sellerId, InventoryStatus status);
+        Task<IEnumerable<Inventory>> GetInventoryBySellerAndStatusAsync(int sellerId, InventoryStatus status);
 
         /// <summary>
         /// Gets all inventory items for a specific product and status
@@ -160,7 +161,7 @@ namespace cookie_authentication_authorization_demo.Services
         /// <param name="startDate">Start date of the range</param>
         /// <param name="endDate">End date of the range</param>
         /// <returns>List of inventory items for the seller within the date range</returns>
-        Task<IEnumerable<Inventory>> GetInventoryBySellerAndDateRangeAsync(string sellerId, DateTime startDate, DateTime endDate);
+        Task<IEnumerable<Inventory>> GetInventoryBySellerAndDateRangeAsync(int sellerId, DateTime startDate, DateTime endDate);
 
         /// <summary>
         /// Gets all inventory items for a specific product and date range
@@ -208,7 +209,7 @@ namespace cookie_authentication_authorization_demo.Services
         /// <param name="startDate">Start date of the range</param>
         /// <param name="endDate">End date of the range</param>
         /// <returns>List of inventory items for the seller with the specified status within the date range</returns>
-        Task<IEnumerable<Inventory>> GetInventoryBySellerStatusAndDateRangeAsync(string sellerId, InventoryStatus status, DateTime startDate, DateTime endDate);
+        Task<IEnumerable<Inventory>> GetInventoryBySellerStatusAndDateRangeAsync(int sellerId, InventoryStatus status, DateTime startDate, DateTime endDate);
 
         /// <summary>
         /// Gets all inventory items for a specific product, status, and date range

@@ -1,20 +1,36 @@
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using cookie_authentication_authorization_demo.Models;
+using cookie_authentication_authorization_demo.Repositories;
 using Microsoft.EntityFrameworkCore;
 using cookie_authentication_authorization_demo.Data;
-using cookie_authentication_authorization_demo.Models;
 using Microsoft.AspNetCore.Identity;
 using System.Text.Json;
+using cookie_authentication_authorization_demo.Enums;
 
 namespace cookie_authentication_authorization_demo.Services
 {
     public class InventoryService : IInventoryService
     {
+        private readonly IInventoryRepository _inventoryRepository;
+        private readonly ILogger<InventoryService> _logger;
         private readonly ApplicationDbContext _context;
         private readonly IAuditService _auditService;
 
-        public InventoryService(ApplicationDbContext context, IAuditService auditService)
+        public InventoryService(IInventoryRepository inventoryRepository, ILogger<InventoryService> logger, ApplicationDbContext context, IAuditService auditService)
         {
+            _inventoryRepository = inventoryRepository;
+            _logger = logger;
             _context = context;
             _auditService = auditService;
+        }
+
+        public async Task<bool> CheckStockAvailabilityAsync(int productId, int quantity)
+        {
+            var product = await _inventoryRepository.GetProductByIdAsync(productId);
+            return product != null && product.StockQuantity >= quantity;
         }
 
         public async Task<IEnumerable<Inventory>> GetAllInventoryAsync()
@@ -67,12 +83,13 @@ namespace cookie_authentication_authorization_demo.Services
             return true;
         }
 
-        public async Task<IEnumerable<Inventory>> GetInventoryBySellerIdAsync(string sellerId)
+        public async Task<IEnumerable<Inventory>> GetInventoryBySellerIdAsync(int sellerId)
         {
             return await _context.Inventory
                 .Include(i => i.Product)
                 .Include(i => i.Seller)
                 .Where(i => i.SellerId == sellerId)
+                .OrderByDescending(i => i.CreatedAt)
                 .ToListAsync();
         }
 
@@ -121,12 +138,13 @@ namespace cookie_authentication_authorization_demo.Services
                 .ToListAsync();
         }
 
-        public async Task<IEnumerable<Inventory>> GetInventoryBySellerAndStatusAsync(string sellerId, InventoryStatus status)
+        public async Task<IEnumerable<Inventory>> GetInventoryBySellerAndStatusAsync(int sellerId, InventoryStatus status)
         {
             return await _context.Inventory
                 .Include(i => i.Product)
                 .Include(i => i.Seller)
                 .Where(i => i.SellerId == sellerId && i.Status == status)
+                .OrderByDescending(i => i.CreatedAt)
                 .ToListAsync();
         }
 
@@ -175,12 +193,13 @@ namespace cookie_authentication_authorization_demo.Services
                 .ToListAsync();
         }
 
-        public async Task<IEnumerable<Inventory>> GetInventoryBySellerAndDateRangeAsync(string sellerId, DateTime startDate, DateTime endDate)
+        public async Task<IEnumerable<Inventory>> GetInventoryBySellerAndDateRangeAsync(int sellerId, DateTime startDate, DateTime endDate)
         {
             return await _context.Inventory
                 .Include(i => i.Product)
                 .Include(i => i.Seller)
                 .Where(i => i.SellerId == sellerId && i.CreatedAt >= startDate && i.CreatedAt <= endDate)
+                .OrderByDescending(i => i.CreatedAt)
                 .ToListAsync();
         }
 
@@ -220,12 +239,13 @@ namespace cookie_authentication_authorization_demo.Services
                 .ToListAsync();
         }
 
-        public async Task<IEnumerable<Inventory>> GetInventoryBySellerStatusAndDateRangeAsync(string sellerId, InventoryStatus status, DateTime startDate, DateTime endDate)
+        public async Task<IEnumerable<Inventory>> GetInventoryBySellerStatusAndDateRangeAsync(int sellerId, InventoryStatus status, DateTime startDate, DateTime endDate)
         {
             return await _context.Inventory
                 .Include(i => i.Product)
                 .Include(i => i.Seller)
                 .Where(i => i.SellerId == sellerId && i.Status == status && i.CreatedAt >= startDate && i.CreatedAt <= endDate)
+                .OrderByDescending(i => i.CreatedAt)
                 .ToListAsync();
         }
 
@@ -265,146 +285,24 @@ namespace cookie_authentication_authorization_demo.Services
                 .ToListAsync();
         }
 
-        /// <summary>
-        /// Checks if there is sufficient stock available for a product
-        /// </summary>
-        /// <param name="productId">ID of the product to check</param>
-        /// <param name="quantity">Quantity to check availability for</param>
-        /// <returns>True if sufficient stock is available, false otherwise</returns>
-        public async Task<bool> CheckStockAvailabilityAsync(int productId, int quantity)
-        {
-            var inventoryItem = await _context.Inventory.FirstOrDefaultAsync(i => i.ProductId == productId);
-            return inventoryItem != null && inventoryItem.Quantity >= quantity;
-        }
-
-        /// <summary>
-        /// Reserves a specified quantity of stock for a product.
-        /// Decreases the stock quantity and logs the action.
-        /// </summary>
-        /// <param name="productId">ID of the product</param>
-        /// <param name="quantity">Quantity to reserve</param>
-        /// <returns>True if stock was reserved successfully, false otherwise</returns>
         public async Task<bool> ReserveStockAsync(int productId, int quantity)
         {
-            var inventoryItem = await _context.Inventory.FirstOrDefaultAsync(i => i.ProductId == productId);
-            if (inventoryItem == null || inventoryItem.Quantity < quantity)
-            {
-                return false; // Not enough stock or product not found in inventory
-            }
-
-            inventoryItem.Quantity -= quantity;
-            await _context.SaveChangesAsync();
-
-            await _auditService.LogActionAsync(
-                "Inventory",
-                "ReserveStock",
-                null,
-                JsonSerializer.Serialize(new
-                {
-                    productId,
-                    oldQuantity = inventoryItem.Quantity + quantity,
-                    newQuantity = inventoryItem.Quantity,
-                    action = "ReserveStock"
-                })
-            );
+            var product = await _inventoryRepository.GetProductByIdAsync(productId);
+            if (product == null || product.StockQuantity < quantity)
+                return false;
+            product.StockQuantity -= quantity;
+            await _inventoryRepository.UpdateProductStockAsync(productId, product.StockQuantity);
             return true;
         }
 
-        /// <summary>
-        /// Releases a specified quantity of stock for a product.
-        /// Increases the stock quantity and logs the action.
-        /// </summary>
-        /// <param name="productId">ID of the product</param>
-        /// <param name="quantity">Quantity to release</param>
-        /// <returns>True if stock was released successfully, false otherwise</returns>
         public async Task<bool> ReleaseStockAsync(int productId, int quantity)
         {
-            var inventoryItem = await _context.Inventory.FirstOrDefaultAsync(i => i.ProductId == productId);
-            if (inventoryItem == null)
-            {
-                return false; // Product not found in inventory
-            }
-
-            inventoryItem.Quantity += quantity;
-            await _context.SaveChangesAsync();
-
-            await _auditService.LogActionAsync(
-                "Inventory",
-                "ReleaseStock",
-                null,
-                JsonSerializer.Serialize(new
-                {
-                    productId,
-                    oldQuantity = inventoryItem.Quantity - quantity,
-                    newQuantity = inventoryItem.Quantity,
-                    action = "ReleaseStock"
-                })
-            );
-            return true;
-        }
-
-        public async Task<bool> AddStockAsync(int productId, int quantity)
-        {
-            var inventory = await _context.Inventory
-                .FirstOrDefaultAsync(i => i.ProductId == productId);
-
-            if (inventory == null)
-            {
-                inventory = new Inventory
-                {
-                    ProductId = productId,
-                    Quantity = quantity,
-                    CreatedAt = DateTime.UtcNow
-                };
-                _context.Inventory.Add(inventory);
-            }
-            else
-            {
-                inventory.Quantity += quantity;
-                inventory.UpdatedAt = DateTime.UtcNow;
-            }
-
-            await _context.SaveChangesAsync();
-            return true;
-        }
-
-        public async Task<bool> RemoveStockAsync(int productId, int quantity)
-        {
-            var inventory = await _context.Inventory
-                .FirstOrDefaultAsync(i => i.ProductId == productId);
-
-            if (inventory == null || inventory.Quantity < quantity)
-            {
+            var product = await _inventoryRepository.GetProductByIdAsync(productId);
+            if (product == null)
                 return false;
-            }
-
-            inventory.Quantity -= quantity;
-            inventory.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
-
-            try
-            {
-                await _auditService.LogActionAsync(
-                    "Inventory",
-                    "RemoveStock",
-                    null,
-                    JsonSerializer.Serialize(new
-                    {
-                        productId,
-                        oldQuantity = inventory.Quantity + quantity,
-                        newQuantity = inventory.Quantity,
-                        action = "RemoveStock"
-                    })
-                );
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                // Handle the exception appropriately
-                Console.WriteLine($"Error logging action: {ex.Message}");
-                return false;
-            }
+            product.StockQuantity += quantity;
+            await _inventoryRepository.UpdateProductStockAsync(productId, product.StockQuantity);
+            return true;
         }
     }
 } 

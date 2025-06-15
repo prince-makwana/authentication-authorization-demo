@@ -6,6 +6,9 @@ using cookie_authentication_authorization_demo.Models;
 using cookie_authentication_authorization_demo.Services;
 using System.Security.Claims;
 using System.Text.Json;
+using cookie_authentication_authorization_demo.Enums;
+using cookie_authentication_authorization_demo.Models.DTOs;
+using cookie_authentication_authorization_demo.Mappers;
 
 namespace cookie_authentication_authorization_demo.Controllers
 {
@@ -15,11 +18,13 @@ namespace cookie_authentication_authorization_demo.Controllers
     {
         private readonly ApplicationDbContext _context;
         private readonly IAuditService _auditService;
+        private readonly IProductService _productService;
 
-        public ProductsController(ApplicationDbContext context, IAuditService auditService)
+        public ProductsController(ApplicationDbContext context, IAuditService auditService, IProductService productService)
         {
             _context = context;
             _auditService = auditService;
+            _productService = productService;
         }
 
         // GET: api/products
@@ -77,60 +82,50 @@ namespace cookie_authentication_authorization_demo.Controllers
             return product;
         }
 
+        // GET: api/products/seller/{sellerId}
+        /// <summary>
+        /// Gets products by seller ID.
+        /// </summary>
+        [HttpGet("seller/{sellerId}")]
+        public async Task<ActionResult<IEnumerable<ProductDTO>>> GetProductsBySeller(string sellerId)
+        {
+            if (!int.TryParse(sellerId, out int sellerIdInt))
+            {
+                return BadRequest("Invalid seller ID format");
+            }
+
+            var products = await _productService.GetProductsBySellerIdAsync(sellerIdInt);
+            return Ok(products.Select(p => ProductMapper.ToDTO(p)));
+        }
+
         // POST: api/products
         /// <summary>
         /// Creates a new product and associates it with a seller.
         /// </summary>
-        [Authorize(Roles = "Administrator,ProductManager")]
+        [Authorize(Roles = "Seller")]
         [HttpPost]
-        public async Task<ActionResult<Product>> CreateProduct(CreateProductRequest request)
+        public async Task<ActionResult<ProductDTO>> CreateProduct(ProductDTO productDto)
         {
             var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(userId))
+            if (string.IsNullOrEmpty(userId) || !int.TryParse(userId, out int userIdInt))
             {
                 return Unauthorized();
             }
 
-            var product = new Product
-            {
-                Name = request.Name,
-                Description = request.Description,
-                Price = request.Price,
-                StockQuantity = request.StockQuantity,
-                Category = request.Category,
-                SellerId = request.SellerId,
-                Status = (request.StockQuantity > 0 ? ProductStatus.InStock : ProductStatus.OutOfStock).ToString(),
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
+            var product = ProductMapper.ToEntity(productDto);
+            product.SellerId = userIdInt;
 
-            _context.Products.Add(product);
-            await _context.SaveChangesAsync();
-
-            await _auditService.LogActionAsync(
-                "Product",
-                "Create",
-                userId,
-                JsonSerializer.Serialize(new
-                {
-                    productId = product.Id,
-                    productName = product.Name,
-                    sellerId = product.SellerId,
-                    price = product.Price,
-                    stockQuantity = product.StockQuantity
-                })
-            );
-
-            return CreatedAtAction(nameof(GetProduct), new { id = product.Id }, product);
+            var createdProduct = await _productService.CreateProductAsync(product);
+            return CreatedAtAction(nameof(GetProduct), new { id = createdProduct.Id }, ProductMapper.ToDTO(createdProduct));
         }
 
         // PUT: api/products/5
         /// <summary>
         /// Updates an existing product and its seller association.
         /// </summary>
-        [Authorize(Roles = "Administrator,ProductManager")]
+        [Authorize(Roles = "Seller")]
         [HttpPut("{id}")]
-        public async Task<IActionResult> UpdateProduct(int id, UpdateProductRequest request)
+        public async Task<IActionResult> UpdateProduct(int id, ProductDTO productDto)
         {
             var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (string.IsNullOrEmpty(userId))
@@ -138,69 +133,29 @@ namespace cookie_authentication_authorization_demo.Controllers
                 return Unauthorized();
             }
 
-            var product = await _context.Products.FindAsync(id);
-            if (product == null)
+            if (!await _productService.IsProductOwnerAsync(id, userId))
             {
-                return NotFound();
+                return Forbid();
             }
 
-            var oldProduct = JsonSerializer.Serialize(new
+            var product = ProductMapper.ToEntity(productDto);
+            if (int.TryParse(userId, out int userIdInt))
             {
-                product.Name,
-                product.Description,
-                product.Price,
-                product.StockQuantity,
-                product.Category,
-                product.SellerId,
-                product.Status
-            });
-
-            product.Name = request.Name;
-            product.Description = request.Description;
-            product.Price = request.Price;
-            product.StockQuantity = request.StockQuantity;
-            product.Category = request.Category;
-            product.SellerId = request.SellerId;
-            product.Status = (request.StockQuantity > 0 ? ProductStatus.InStock : ProductStatus.OutOfStock).ToString();
-            product.UpdatedAt = DateTime.UtcNow;
+                product.SellerId = userIdInt;
+            }
+            else
+            {
+                return BadRequest("Invalid user ID format");
+            }
 
             try
             {
-                await _context.SaveChangesAsync();
-
-                await _auditService.LogActionAsync(
-                    "Product",
-                    "Update",
-                    userId,
-                    JsonSerializer.Serialize(new
-                    {
-                        productId = id,
-                        oldProduct,
-                        newProduct = new
-                        {
-                            product.Name,
-                            product.Description,
-                            product.Price,
-                            product.StockQuantity,
-                            product.Category,
-                            product.SellerId,
-                            product.Status
-                        }
-                    })
-                );
-
-                return Ok(product);
+                await _productService.UpdateProductAsync(id, product);
+                return NoContent();
             }
-            catch (DbUpdateConcurrencyException)
+            catch (InvalidOperationException ex)
             {
-                if (!ProductExists(id))
-                {
-                    return NotFound();
-                }
-                else
-                {
-                    throw;
-                }
+                return BadRequest(ex.Message);
             }
         }
 

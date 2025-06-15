@@ -65,6 +65,11 @@ public class ProductDTO
     public int SellerId { get; set; }
 
     /// <summary>
+    /// Name of the seller who owns this product
+    /// </summary>
+    public string? SellerName { get; set; }
+
+    /// <summary>
     /// Current status of the product
     /// </summary>
     public ProductStatus Status { get; set; }

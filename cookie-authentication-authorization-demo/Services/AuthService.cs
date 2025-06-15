@@ -7,6 +7,12 @@ using cookie_authentication_authorization_demo.Models;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using cookie_authentication_authorization_demo.Models.DTOs;
+using cookie_authentication_authorization_demo.Models.ViewModels;
 
 namespace cookie_authentication_authorization_demo.Services
 {
@@ -19,6 +25,7 @@ namespace cookie_authentication_authorization_demo.Services
         private readonly SignInManager<ApplicationUser> _signInManager;
         private readonly IAuditService _auditService;
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly ILogger<AuthService> _logger;
 
         /// <summary>
         /// Constructor for AuthService
@@ -27,16 +34,19 @@ namespace cookie_authentication_authorization_demo.Services
         /// <param name="signInManager">SignInManager for handling sign-in operations</param>
         /// <param name="auditService">Service for logging audit actions</param>
         /// <param name="httpContextAccessor">IHttpContextAccessor for accessing HttpContext</param>
+        /// <param name="logger">ILogger for logging messages</param>
         public AuthService(
             UserManager<ApplicationUser> userManager,
             SignInManager<ApplicationUser> signInManager,
             IAuditService auditService,
-            IHttpContextAccessor httpContextAccessor)
+            IHttpContextAccessor httpContextAccessor,
+            ILogger<AuthService> logger)
         {
             _userManager = userManager;
             _signInManager = signInManager;
             _auditService = auditService;
             _httpContextAccessor = httpContextAccessor;
+            _logger = logger;
         }
 
         /// <summary>
@@ -217,6 +227,71 @@ namespace cookie_authentication_authorization_demo.Services
                 );
             }
             return result;
+        }
+
+        public async Task<IdentityResult> CreateUserAsync(ApplicationUser user, string password)
+        {
+            return await _userManager.CreateAsync(user, password);
+        }
+
+        public async Task<IdentityResult> UpdateUserAsync(ApplicationUser user)
+        {
+            return await _userManager.UpdateAsync(user);
+        }
+
+        public async Task<IdentityResult> DeleteUserAsync(ApplicationUser user)
+        {
+            return await _userManager.DeleteAsync(user);
+        }
+
+        public async Task<SignInResult> SignInAsync(string email, string password, bool rememberMe)
+        {
+            return await _signInManager.PasswordSignInAsync(email, password, rememberMe, lockoutOnFailure: false);
+        }
+
+        public async Task<IdentityResult> ResetPasswordAsync(ApplicationUser user, string token, string newPassword)
+        {
+            return await _userManager.ResetPasswordAsync(user, token, newPassword);
+        }
+
+        public async Task<string> GeneratePasswordResetTokenAsync(ApplicationUser user)
+        {
+            return await _userManager.GeneratePasswordResetTokenAsync(user);
+        }
+
+        public async Task<bool> IsEmailConfirmedAsync(ApplicationUser user)
+        {
+            return await _userManager.IsEmailConfirmedAsync(user);
+        }
+
+        public async Task<IdentityResult> ConfirmEmailAsync(ApplicationUser user, string token)
+        {
+            return await _userManager.ConfirmEmailAsync(user, token);
+        }
+
+        public async Task<string> GenerateEmailConfirmationTokenAsync(ApplicationUser user)
+        {
+            return await _userManager.GenerateEmailConfirmationTokenAsync(user);
+        }
+
+        public async Task<IdentityResult> AddToRoleAsync(ApplicationUser user, string role)
+        {
+            return await _userManager.AddToRoleAsync(user, role);
+        }
+
+        public async Task<IdentityResult> RemoveFromRoleAsync(ApplicationUser user, string role)
+        {
+            return await _userManager.RemoveFromRoleAsync(user, role);
+        }
+
+        public async Task<IList<string>> GetRolesAsync(ApplicationUser user)
+        {
+            return await _userManager.GetRolesAsync(user);
+        }
+
+        public async Task<bool> IsInRoleAsync(ApplicationUser user, string role)
+        {
+            return await _userManager.IsInRoleAsync(user, role);
         }
     }
 } 

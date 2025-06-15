@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.AspNetCore.Identity;
+using cookie_authentication_authorization_demo.Enums;
 
 namespace cookie_authentication_authorization_demo.Models
 {
@@ -79,46 +80,5 @@ namespace cookie_authentication_authorization_demo.Models
         /// Collection of payments made for this order
         /// </summary>
         public ICollection<Payment> Payments { get; set; } = new List<Payment>();
-    }
-
-    /// <summary>
-    /// Possible statuses of an order
-    /// </summary>
-    public enum OrderStatus
-    {
-        /// <summary>
-        /// Order has been placed but not yet confirmed
-        /// </summary>
-        Pending,
-
-        /// <summary>
-        /// Order has been confirmed
-        /// </summary>
-        Confirmed,
-
-        /// <summary>
-        /// Order is being processed
-        /// </summary>
-        Processing,
-
-        /// <summary>
-        /// Order has been shipped
-        /// </summary>
-        Shipped,
-
-        /// <summary>
-        /// Order has been delivered
-        /// </summary>
-        Delivered,
-
-        /// <summary>
-        /// Order has been cancelled
-        /// </summary>
-        Cancelled,
-
-        /// <summary>
-        /// Order has been refunded
-        /// </summary>
-        Refunded
     }
 } 

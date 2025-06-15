@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using cookie_authentication_authorization_demo.Enums;
 
 namespace cookie_authentication_authorization_demo.Models;
 
@@ -57,8 +58,7 @@ public class Product
     /// Current status of the product
     /// </summary>
     [Required]
-    [StringLength(50)]
-    public string Status { get; set; } = string.Empty;
+    public ProductStatus Status { get; set; } = ProductStatus.InStock;
 
     /// <summary>
     /// URL of the product's image

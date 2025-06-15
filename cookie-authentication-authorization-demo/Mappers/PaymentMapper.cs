@@ -6,8 +6,13 @@ namespace cookie_authentication_authorization_demo.Mappers;
 
 public static class PaymentMapper
 {
-    public static PaymentDTO ToDTO(Payment payment)
+    public static PaymentDTO? ToDTO(Payment? payment)
     {
+        if (payment == null)
+        {
+            return null;
+        }
+
         return new PaymentDTO
         {
             Id = payment.Id,

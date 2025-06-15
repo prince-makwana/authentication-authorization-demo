@@ -1,162 +1,243 @@
-using Microsoft.EntityFrameworkCore;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 using cookie_authentication_authorization_demo.Data;
 using cookie_authentication_authorization_demo.Models;
+using cookie_authentication_authorization_demo.Models.DTOs;
+using cookie_authentication_authorization_demo.Models.ViewModels;
+using cookie_authentication_authorization_demo.Repositories;
+using cookie_authentication_authorization_demo.Mappers;
+using cookie_authentication_authorization_demo.Enums;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
-namespace cookie_authentication_authorization_demo.Services
+namespace cookie_authentication_authorization_demo.Services;
+
+public class OrderService : IOrderService
 {
-    public class OrderService : IOrderService
+    private readonly IOrderRepository _orderRepository;
+    private readonly IProductRepository _productRepository;
+    private readonly IInventoryRepository _inventoryRepository;
+    private readonly ILogger<OrderService> _logger;
+
+    public OrderService(
+        IOrderRepository orderRepository,
+        IProductRepository productRepository,
+        IInventoryRepository inventoryRepository,
+        ILogger<OrderService> logger)
     {
-        private readonly ApplicationDbContext _context;
-        private readonly IAuditService _auditService;
-        private readonly IInventoryService _inventoryService;
+        _orderRepository = orderRepository;
+        _productRepository = productRepository;
+        _inventoryRepository = inventoryRepository;
+        _logger = logger;
+    }
 
-        public OrderService(
-            ApplicationDbContext context,
-            IAuditService auditService,
-            IInventoryService inventoryService)
-        {
-            _context = context;
-            _auditService = auditService;
-            _inventoryService = inventoryService;
-        }
+    public async Task<IEnumerable<OrderDTO>> GetAllOrdersAsync()
+    {
+        var orders = await _orderRepository.GetAllAsync();
+        return orders.Select(OrderMapper.ToDTO);
+    }
 
-        public async Task<IEnumerable<Order>> GetAllOrdersAsync()
-        {
-            return await _context.Orders
-                .Include(o => o.User)
-                .Include(o => o.OrderItems)
-                    .ThenInclude(oi => oi.Product)
-                .ToListAsync();
-        }
+    public async Task<OrderDTO> GetOrderByIdAsync(int id)
+    {
+        var order = await _orderRepository.GetByIdAsync(id);
+        return order != null ? OrderMapper.ToDTO(order) : null!;
+    }
 
-        public async Task<Order?> GetOrderByIdAsync(int id)
-        {
-            return await _context.Orders
-                .Include(o => o.User)
-                .Include(o => o.OrderItems)
-                    .ThenInclude(oi => oi.Product)
-                .FirstOrDefaultAsync(o => o.Id == id);
-        }
+    public async Task<IEnumerable<OrderDTO>> GetOrdersByUserIdAsync(string userId)
+    {
+        var orders = await _orderRepository.GetByUserIdAsync(userId);
+        return orders.Select(OrderMapper.ToDTO);
+    }
 
-        public async Task<IEnumerable<Order>> GetOrdersByUserIdAsync(string userId)
+    public async Task<OrderDTO> CreateOrderAsync(CreateOrderViewModel model, string userId)
+    {
+        try
         {
-            return await _context.Orders
-                .Include(o => o.OrderItems)
-                    .ThenInclude(oi => oi.Product)
-                .Where(o => o.UserId == userId)
-                .ToListAsync();
-        }
-
-        public async Task<Order> CreateOrderAsync(Order order)
-        {
-            // Validate stock availability
-            foreach (var item in order.OrderItems)
+            // Validate order items
+            foreach (var item in model.OrderItems)
             {
-                var isAvailable = await _inventoryService.CheckStockAvailabilityAsync(
-                    item.ProductId,
-                    item.Quantity);
-                if (!isAvailable)
+                var product = await _productRepository.GetByIdAsync(item.ProductId);
+                if (product == null)
                 {
-                    throw new InvalidOperationException(
-                        $"Insufficient stock for product ID {item.ProductId}");
+                    throw new ArgumentException($"Product with ID {item.ProductId} not found");
+                }
+
+                var inventory = await _inventoryRepository.GetProductByIdAsync(item.ProductId);
+                if (inventory == null || inventory.StockQuantity < item.Quantity)
+                {
+                    throw new ArgumentException($"Insufficient inventory for product {product.Name}");
                 }
             }
 
-            // Reserve stock
+            // Create order
+            var order = new Order
+            {
+                OrderNumber = GenerateOrderNumber(),
+                UserId = userId,
+                ShippingAddress = model.ShippingAddress,
+                Status = Enums.OrderStatus.Pending,
+                OrderItems = model.OrderItems.Select(item => new OrderItem
+                {
+                    ProductId = item.ProductId,
+                    Quantity = item.Quantity,
+                    UnitPrice = item.UnitPrice
+                }).ToList()
+            };
+
+            // Calculate total amount
+            order.TotalAmount = order.OrderItems.Sum(item => item.Quantity * item.UnitPrice);
+
+            // Save order
+            await _orderRepository.AddAsync(order);
+
+            // Update inventory
             foreach (var item in order.OrderItems)
             {
-                await _inventoryService.ReserveStockAsync(
-                    item.ProductId,
-                    item.Quantity);
+                var inventory = await _inventoryRepository.GetProductByIdAsync(item.ProductId);
+                if (inventory != null)
+                {
+                    await _inventoryRepository.UpdateProductStockAsync(item.ProductId, inventory.StockQuantity - item.Quantity);
+                }
             }
 
-            order.CreatedAt = DateTime.UtcNow;
-            order.Status = OrderStatus.Pending;
-            _context.Orders.Add(order);
-            await _context.SaveChangesAsync();
-            return order;
+            return OrderMapper.ToDTO(order);
         }
-
-        public async Task<Order> UpdateOrderStatusAsync(int id, OrderStatus status)
+        catch (Exception ex)
         {
-            var order = await _context.Orders.FindAsync(id);
-            if (order == null)
-            {
-                throw new KeyNotFoundException($"Order with ID {id} not found");
-            }
-
-            order.Status = status;
-            order.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
-            return order;
+            _logger.LogError(ex, "Error creating order for user {UserId}", userId);
+            throw;
         }
+    }
 
-        public async Task<bool> CancelOrderAsync(int id)
+    public async Task<OrderDTO> UpdateOrderStatusAsync(int id, OrderStatus status, string userId)
+    {
+        var order = await _orderRepository.GetByIdAsync(id);
+        if (order == null)
         {
-            var order = await _context.Orders
-                .Include(o => o.OrderItems)
-                .FirstOrDefaultAsync(o => o.Id == id);
-
-            if (order == null)
-            {
-                return false;
-            }
-
-            if (order.Status == OrderStatus.Delivered)
-            {
-                throw new InvalidOperationException("Cannot cancel a delivered order");
-            }
-
-            // Release reserved stock
-            foreach (var item in order.OrderItems)
-            {
-                await _inventoryService.ReleaseStockAsync(
-                    item.ProductId,
-                    item.Quantity);
-            }
-
-            order.Status = OrderStatus.Cancelled;
-            order.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
-            return true;
+            throw new ArgumentException($"Order with ID {id} not found");
         }
 
-        public async Task<bool> ProcessOrderAsync(int id)
+        if (order.UserId != userId)
         {
-            var order = await _context.Orders.FindAsync(id);
-            if (order == null)
-            {
-                return false;
-            }
-
-            if (order.Status != OrderStatus.Pending)
-            {
-                throw new InvalidOperationException("Order is not in pending status");
-            }
-
-            order.Status = OrderStatus.Processing;
-            order.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
-            return true;
+            throw new UnauthorizedAccessException("You are not authorized to update this order");
         }
 
-        public async Task<bool> CompleteOrderAsync(int id)
+        if (!IsValidStatusTransition(order.Status, status))
         {
-            var order = await _context.Orders.FindAsync(id);
-            if (order == null)
-            {
-                return false;
-            }
-
-            if (order.Status != OrderStatus.Processing)
-            {
-                throw new InvalidOperationException("Order is not in processing status");
-            }
-
-            order.Status = OrderStatus.Delivered;
-            order.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
-            return true;
+            throw new InvalidOperationException($"Cannot transition from {order.Status} to {status}");
         }
+
+        order.Status = status;
+        order.UpdatedAt = DateTime.UtcNow;
+
+        await _orderRepository.UpdateAsync(order);
+        return OrderMapper.ToDTO(order);
+    }
+
+    public async Task<bool> CancelOrderAsync(int id, string userId)
+    {
+        var order = await _orderRepository.GetByIdAsync(id);
+        if (order == null)
+        {
+            throw new ArgumentException($"Order with ID {id} not found");
+        }
+
+        if (order.UserId != userId)
+        {
+            throw new UnauthorizedAccessException("You are not authorized to cancel this order");
+        }
+
+        if (order.Status != Enums.OrderStatus.Pending && order.Status != Enums.OrderStatus.Confirmed)
+        {
+            throw new InvalidOperationException("Only pending or confirmed orders can be cancelled");
+        }
+
+        order.Status = Enums.OrderStatus.Cancelled;
+        order.UpdatedAt = DateTime.UtcNow;
+
+        // Restore inventory
+        foreach (var item in order.OrderItems)
+        {
+            var inventory = await _inventoryRepository.GetProductByIdAsync(item.ProductId);
+            if (inventory != null)
+            {
+                await _inventoryRepository.UpdateProductStockAsync(item.ProductId, inventory.StockQuantity + item.Quantity);
+            }
+        }
+
+        await _orderRepository.UpdateAsync(order);
+        return true;
+    }
+
+    public async Task<bool> ProcessOrderAsync(int id, string userId)
+    {
+        var order = await _orderRepository.GetByIdAsync(id);
+        if (order == null)
+        {
+            throw new ArgumentException($"Order with ID {id} not found");
+        }
+
+        if (order.UserId != userId)
+        {
+            throw new UnauthorizedAccessException("You are not authorized to process this order");
+        }
+
+        if (order.Status != Enums.OrderStatus.Confirmed)
+        {
+            throw new InvalidOperationException("Only confirmed orders can be processed");
+        }
+
+        order.Status = Enums.OrderStatus.Processing;
+        order.UpdatedAt = DateTime.UtcNow;
+
+        await _orderRepository.UpdateAsync(order);
+        return true;
+    }
+
+    public async Task<bool> CompleteOrderAsync(int id, string userId)
+    {
+        var order = await _orderRepository.GetByIdAsync(id);
+        if (order == null)
+        {
+            throw new ArgumentException($"Order with ID {id} not found");
+        }
+
+        if (order.UserId != userId)
+        {
+            throw new UnauthorizedAccessException("You are not authorized to complete this order");
+        }
+
+        if (order.Status != Enums.OrderStatus.Processing)
+        {
+            throw new InvalidOperationException("Only processing orders can be completed");
+        }
+
+        order.Status = Enums.OrderStatus.Delivered;
+        order.UpdatedAt = DateTime.UtcNow;
+
+        await _orderRepository.UpdateAsync(order);
+        return true;
+    }
+
+    private string GenerateOrderNumber()
+    {
+        return $"ORD-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString().Substring(0, 8)}";
+    }
+
+    private bool IsValidStatusTransition(Enums.OrderStatus currentStatus, Enums.OrderStatus newStatus)
+    {
+        return (currentStatus, newStatus) switch
+        {
+            (Enums.OrderStatus.Pending, Enums.OrderStatus.Confirmed) => true,
+            (Enums.OrderStatus.Confirmed, Enums.OrderStatus.Processing) => true,
+            (Enums.OrderStatus.Processing, Enums.OrderStatus.Shipped) => true,
+            (Enums.OrderStatus.Shipped, Enums.OrderStatus.Delivered) => true,
+            (Enums.OrderStatus.Pending, Enums.OrderStatus.Cancelled) => true,
+            (Enums.OrderStatus.Confirmed, Enums.OrderStatus.Cancelled) => true,
+            (Enums.OrderStatus.Delivered, Enums.OrderStatus.Refunded) => true,
+            _ => false
+        };
     }
 } 

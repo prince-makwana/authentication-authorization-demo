@@ -2,14 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using cookie_authentication_authorization_demo.Data;
 using cookie_authentication_authorization_demo.Models;
 using cookie_authentication_authorization_demo.Models.DTOs;
 using cookie_authentication_authorization_demo.Models.ViewModels;
 using cookie_authentication_authorization_demo.Enums;
 using cookie_authentication_authorization_demo.Mappers;
+using cookie_authentication_authorization_demo.Repositories;
 
 namespace cookie_authentication_authorization_demo.Services;
 
@@ -18,16 +17,16 @@ namespace cookie_authentication_authorization_demo.Services;
 /// </summary>
 public class PaymentService : IPaymentService
 {
-    private readonly ApplicationDbContext _context;
+    private readonly IPaymentRepository _paymentRepository;
     private readonly ILogger<PaymentService> _logger;
     private readonly IAuditService _auditService;
 
     public PaymentService(
-        ApplicationDbContext context,
+        IPaymentRepository paymentRepository,
         ILogger<PaymentService> logger,
         IAuditService auditService)
     {
-        _context = context;
+        _paymentRepository = paymentRepository;
         _logger = logger;
         _auditService = auditService;
     }
@@ -36,7 +35,7 @@ public class PaymentService : IPaymentService
     {
         try
         {
-            var payment = new Models.Payment
+            var payment = new Payment
             {
                 UserId = userId,
                 OrderId = model.OrderId,
@@ -47,8 +46,7 @@ public class PaymentService : IPaymentService
                 UpdatedAt = DateTime.UtcNow
             };
 
-            _context.Payments.Add(payment);
-            await _context.SaveChangesAsync();
+            payment = await _paymentRepository.AddAsync(payment);
 
             await _auditService.LogActionAsync(
                 "Payment",
@@ -66,29 +64,25 @@ public class PaymentService : IPaymentService
         }
     }
 
-    public async Task<PaymentDTO> GetPaymentByIdAsync(int id)
+    public async Task<PaymentDTO?> GetPaymentByIdAsync(int id)
     {
-        var payment = await _context.Payments
-            .Include(p => p.User)
-            .FirstOrDefaultAsync(p => p.Id == id);
-
-        return payment != null ? PaymentMapper.ToDTO(payment) : null;
+        var payment = await _paymentRepository.GetByIdWithUserAsync(id);
+        if (payment == null)
+        {
+            return null;
+        }
+        return PaymentMapper.ToDTO(payment);
     }
 
     public async Task<IEnumerable<PaymentDTO>> GetUserPaymentsAsync(string userId)
     {
-        var payments = await _context.Payments
-            .Include(p => p.User)
-            .Where(p => p.UserId == userId)
-            .OrderByDescending(p => p.CreatedAt)
-            .ToListAsync();
-
+        var payments = await _paymentRepository.GetByUserIdAsync(userId);
         return payments.Select(p => PaymentMapper.ToDTO(p));
     }
 
     public async Task<PaymentDTO> UpdatePaymentStatusAsync(int id, PaymentStatus newStatus, string userId)
     {
-        var payment = await _context.Payments.FindAsync(id);
+        var payment = await _paymentRepository.GetByIdAsync(id);
         if (payment == null)
         {
             throw new KeyNotFoundException($"Payment with ID {id} not found");
@@ -98,7 +92,7 @@ public class PaymentService : IPaymentService
         payment.Status = newStatus.ToString();
         payment.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        payment = await _paymentRepository.UpdateAsync(payment);
 
         await _auditService.LogActionAsync(
             "Payment",
@@ -112,7 +106,7 @@ public class PaymentService : IPaymentService
 
     public async Task<PaymentDTO> ProcessPaymentAsync(int id, string userId)
     {
-        var payment = await _context.Payments.FindAsync(id);
+        var payment = await _paymentRepository.GetByIdAsync(id);
         if (payment == null)
         {
             throw new KeyNotFoundException($"Payment with ID {id} not found");
@@ -126,7 +120,7 @@ public class PaymentService : IPaymentService
         payment.Status = PaymentStatus.Processing.ToString();
         payment.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        payment = await _paymentRepository.UpdateAsync(payment);
 
         await _auditService.LogActionAsync(
             "Payment",
@@ -140,7 +134,7 @@ public class PaymentService : IPaymentService
 
     public async Task<PaymentDTO> CompletePaymentAsync(int id, string userId)
     {
-        var payment = await _context.Payments.FindAsync(id);
+        var payment = await _paymentRepository.GetByIdAsync(id);
         if (payment == null)
         {
             throw new KeyNotFoundException($"Payment with ID {id} not found");
@@ -155,7 +149,7 @@ public class PaymentService : IPaymentService
         payment.ProcessedAt = DateTime.UtcNow;
         payment.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        payment = await _paymentRepository.UpdateAsync(payment);
 
         await _auditService.LogActionAsync(
             "Payment",
@@ -169,7 +163,7 @@ public class PaymentService : IPaymentService
 
     public async Task<PaymentDTO> CancelPaymentAsync(int id, string userId)
     {
-        var payment = await _context.Payments.FindAsync(id);
+        var payment = await _paymentRepository.GetByIdAsync(id);
         if (payment == null)
         {
             throw new KeyNotFoundException($"Payment with ID {id} not found");
@@ -183,7 +177,7 @@ public class PaymentService : IPaymentService
         payment.Status = PaymentStatus.Cancelled.ToString();
         payment.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        payment = await _paymentRepository.UpdateAsync(payment);
 
         await _auditService.LogActionAsync(
             "Payment",
@@ -197,7 +191,7 @@ public class PaymentService : IPaymentService
 
     public async Task<PaymentDTO> RefundPaymentAsync(int id, string userId)
     {
-        var payment = await _context.Payments.FindAsync(id);
+        var payment = await _paymentRepository.GetByIdAsync(id);
         if (payment == null)
         {
             throw new KeyNotFoundException($"Payment with ID {id} not found");
@@ -211,7 +205,7 @@ public class PaymentService : IPaymentService
         payment.Status = PaymentStatus.Refunded.ToString();
         payment.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        payment = await _paymentRepository.UpdateAsync(payment);
 
         await _auditService.LogActionAsync(
             "Payment",
@@ -225,7 +219,7 @@ public class PaymentService : IPaymentService
 
     public async Task<bool> VerifyPaymentAsync(int id)
     {
-        var payment = await _context.Payments.FindAsync(id);
+        var payment = await _paymentRepository.GetByIdAsync(id);
         if (payment == null)
         {
             throw new KeyNotFoundException($"Payment with ID {id} not found");
