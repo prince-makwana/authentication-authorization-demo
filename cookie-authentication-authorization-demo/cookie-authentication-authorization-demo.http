@@ -1,0 +1,182 @@
+@cookie_authentication_authorization_demo_HostAddress = http://localhost:5112
+@baseUrl = https://localhost:7001
+@contentType = application/json
+
+
+###
+
+### Authentication Endpoints ###
+
+# Register a new user
+POST {{baseUrl}}/api/auth/register
+Content-Type: {{contentType}}
+
+{
+    "username": "newuser",
+    "email": "newuser@example.com",
+    "password": "NewUser123!"
+}
+
+### Login
+POST {{baseUrl}}/api/auth/login
+Content-Type: {{contentType}}
+
+{
+    "username": "admin",
+    "password": "Admin123!"
+}
+
+### Logout
+POST {{baseUrl}}/api/auth/logout
+
+### Change Password
+POST {{baseUrl}}/api/auth/change-password
+Content-Type: {{contentType}}
+
+{
+    "currentPassword": "Admin123!",
+    "newPassword": "NewAdmin123!"
+}
+
+### Product Endpoints ###
+
+# Get all products
+GET {{baseUrl}}/api/products
+
+### Get product by ID
+GET {{baseUrl}}/api/products/1
+
+### Create new product (requires ProductManager role)
+POST {{baseUrl}}/api/products
+Content-Type: {{contentType}}
+
+{
+    "name": "New Product",
+    "description": "Product description",
+    "price": 299.99,
+    "stockQuantity": 100,
+    "category": "Electronics",
+    "imageUrl": "https://example.com/product.jpg"
+}
+
+### Update product (requires ProductManager role)
+PUT {{baseUrl}}/api/products/1
+Content-Type: {{contentType}}
+
+{
+    "id": 1,
+    "name": "Updated Product",
+    "description": "Updated description",
+    "price": 399.99,
+    "stockQuantity": 150,
+    "category": "Electronics",
+    "imageUrl": "https://example.com/updated-product.jpg"
+}
+
+### Delete product (requires ProductManager role)
+DELETE {{baseUrl}}/api/products/1
+
+### Order Endpoints ###
+
+# Get all orders (returns user's orders or all orders for admin/support)
+GET {{baseUrl}}/api/orders
+
+### Get order by ID
+GET {{baseUrl}}/api/orders/1
+
+### Create new order
+POST {{baseUrl}}/api/orders
+Content-Type: {{contentType}}
+
+{
+    "shippingAddress": "123 Main St, City, Country",
+    "totalAmount": 999.99
+}
+
+### Cancel order
+PUT {{baseUrl}}/api/orders/1/cancel
+
+### Inventory Endpoints ###
+
+# Get inventory (requires InventoryManager role)
+GET {{baseUrl}}/api/inventory
+
+### Update stock (requires InventoryManager role)
+POST {{baseUrl}}/api/inventory
+Content-Type: {{contentType}}
+
+{
+    "productId": 1,
+    "quantity": 50
+}
+
+### Remove stock (requires InventoryManager role)
+DELETE {{baseUrl}}/api/inventory/1
+Content-Type: {{contentType}}
+
+{
+    "quantity": 10
+}
+
+### Payment Endpoints ###
+
+# Get all payments (requires FinanceTeam role)
+GET {{baseUrl}}/api/payments
+
+### Get payment by ID
+GET {{baseUrl}}/api/payments/1
+
+### Create payment
+POST {{baseUrl}}/api/payments
+Content-Type: {{contentType}}
+
+{
+    "orderId": 1,
+    "amount": 999.99,
+    "paymentMethod": "CreditCard"
+}
+
+### Refund payment (requires FinanceTeam role)
+POST {{baseUrl}}/api/payments/1/refund
+Content-Type: {{contentType}}
+
+{
+    "reason": "Customer request"
+}
+
+### Audit Endpoints (requires AuditTeam role) ###
+
+# Get order audit
+GET {{baseUrl}}/api/audit/orders?startDate=2024-01-01&endDate=2024-12-31
+
+### Get transaction audit
+GET {{baseUrl}}/api/audit/transactions?startDate=2024-01-01&endDate=2024-12-31
+
+### Get inventory audit
+GET {{baseUrl}}/api/audit/inventory?startDate=2024-01-01&endDate=2024-12-31
+
+### Delivery Endpoints (requires DeliveryTeam role) ###
+
+# Get orders to deliver
+GET {{baseUrl}}/api/delivery/orders
+
+### Mark order as delivered
+POST {{baseUrl}}/api/delivery/1/deliver
+
+### Report delivery issue
+POST {{baseUrl}}/api/delivery/1/reportIssue
+Content-Type: {{contentType}}
+
+{
+    "issueDescription": "Customer not available at delivery address"
+}
+
+### Test Users Credentials ###
+# Admin: admin@example.com / Admin123!
+# Product Manager: product@example.com / Product123!
+# Inventory Manager: inventory@example.com / Inventory123!
+# Customer Support: support@example.com / Support123!
+# Finance Team: finance@example.com / Finance123!
+# Delivery Team: delivery@example.com / Delivery123!
+# Audit Team: audit@example.com / Audit123!
+# Customer: customer@example.com / Customer123!
